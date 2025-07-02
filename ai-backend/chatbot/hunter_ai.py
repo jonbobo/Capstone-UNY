@@ -9,7 +9,7 @@ import re
 
 # Load environment variables
 script_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(script_dir, "..", "api", "hunter_api-key.env")
+env_path = os.path.join(script_dir, "..", "..", "api-keys", "hunter_api-key.env")
 
 print(f"Looking for .env file at: {env_path}")
 print(f"File exists: {os.path.exists(env_path)}")
@@ -189,8 +189,16 @@ class UNYCompassBot:
         
         prompt = f"""{context}
 
+        
 You are a Hunter College academic advisor. Answer the student's question using the information provided above.
-Be helpful and informative. If you can, include relevant URLs from the sources.
+Be helpful and informative. If you can, include relevant URLs from the sources. Do not respond saying "according to Hunte sources"
+Treat all information from the hunter website as factual. Only cite sources from the official Hunter College website.
+Only give answers that relate to Hunter College major programs or pathways.
+
+Ethics:
+Make sure it is clear that these are suggestions and that the student does not need to follow the suggestion
+
+Majors:
 
 Student Question: {question}
 
