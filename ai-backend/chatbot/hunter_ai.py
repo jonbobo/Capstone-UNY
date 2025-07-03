@@ -1,66 +1,41 @@
 import os
-import pickle # for convertiving objects to bytes 
+import pickle
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from langchain_openai import ChatOpenAI  
 from dotenv import load_dotenv
 import re
 
-# Load environment variables
+# Load env
 script_dir = os.path.dirname(os.path.abspath(__file__))
-env_path = os.path.join(script_dir, "..", "..", "api-keys", "hunter_api-key.env")
-
-print(f"Looking for .env file at: {env_path}")
-print(f"File exists: {os.path.exists(env_path)}")
-
+env_path = os.path.join(script_dir, "..", "api", "hunter_api-key.env")
 load_dotenv(dotenv_path=env_path)
 
-api_key = os.getenv("OPENAI_API_KEY")
-print(f"API key loaded: {'Yes' if api_key else 'No'}")
-print()
-
 class UNYCompassDatabase:
-    """Vector database for UNY Compass data"""
-
     def __init__(self, db_file='../chatbot/unycompass_vectors.pkl'):
         self.db_file = db_file
-        self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.model = None
         self.chunks = []
         self.vectors = None
+        self._cache = {}
+        
+        # Auto-load if exists
+        if os.path.exists(db_file):
+            self.load_database()
+
+    def _get_model(self):
+        if self.model is None:
+            self.model = SentenceTransformer('all-MiniLM-L6-v2')
+        return self.model
 
     def clean_text(self, text):
-        """Clean and normalize text"""
-        text = re.sub(r'\s+', ' ', text)
-        return text.strip()
+        return re.sub(r'\s+', ' ', text).strip()
     
-    def extract_page_info(self, page_text):
-        """Extract basic info from page"""
-        lines = page_text.split('\n')
-        url = ""
-        title = ""
-    
-        for line in lines[:3]:
-            if "hunter.cuny.edu/" in line:
-                url = line.strip()
-                break
-        
-        for line in lines:
-            clean_line = line.strip()
-            if clean_line and len(clean_line) > 10:
-                title = clean_line[:100]
-                break
-
-        return {'url': url, 'title': title}
-        
+    #  Creates vector embeddings from text
     def build_database(self, content_file='../docs/hunter_content.txt'):
-        """Build vector database from content file"""
         if not os.path.exists(content_file):
-            print(f"Content file not found: {content_file}")
             return False
         
-        print("Building database...")
-
         with open(content_file, 'r', encoding='utf-8') as f:
             content = f.read()
 
@@ -71,88 +46,83 @@ class UNYCompassDatabase:
                 continue
 
             page_text = self.clean_text(page)
-            page_info = self.extract_page_info(page_text)
+            
+            # Get URL
+            url = ""
+            for line in page_text.split('\n')[:3]:
+                if "hunter.cuny.edu/" in line:
+                    url = line.strip()
+                    break
 
-            # Split into chunks
+            # Chunk text
             words = page_text.split()
-            chunk_size = 500
-
-            for i in range(0, len(words), chunk_size):
-                chunk_words = words[i:i + chunk_size]
-                chunk_text = ' '.join(chunk_words)
-
-                if len(chunk_text.strip()) < 50:
-                    continue
-
-                chunk_data = {
-                    'text': chunk_text,
-                    'page_idx': page_idx,
-                    'url': page_info['url'],
-                    'title': page_info['title']
-                }
-
-                self.chunks.append(chunk_data)
-
-        print(f'Created {len(self.chunks)} chunks')
+            for i in range(0, len(words), 200):
+                chunk_text = ' '.join(words[i:i + 400])
+                if len(chunk_text.strip()) > 50:
+                    self.chunks.append({
+                        'text': chunk_text,
+                        'url': url,
+                        'page_idx': page_idx
+                    })
 
         # Create vectors
-        chunk_texts = [chunk['text'] for chunk in self.chunks]
-        self.vectors = self.model.encode(chunk_texts)
+        model = self._get_model()
+        texts = [chunk['text'] for chunk in self.chunks]
+        self.vectors = model.encode(texts)
+        
+        # Normalize for speed
+        norms = np.linalg.norm(self.vectors, axis=1, keepdims=True)
+        self.vectors = self.vectors / norms
 
         self.save_database()
         return True
     
-    # func to save database
+    # Saves database content
     def save_database(self):
-        """Save database to file"""
-        database_data = {
-            'chunks': self.chunks,
-            'vectors': self.vectors
-        }
-
         with open(self.db_file, 'wb') as f:
-            pickle.dump(database_data, f)
+            pickle.dump({'chunks': self.chunks, 'vectors': self.vectors}, f)
 
-        print(f"Database saved to {self.db_file}")
-
-    # to load the database
+    # Loaas database with content
     def load_database(self):
-        """Load existing database"""
         if not os.path.exists(self.db_file):
             return False
         
         with open(self.db_file, 'rb') as f:
-            db_data = pickle.load(f)
+            data = pickle.load(f)
         
-        self.chunks = db_data['chunks']
-        self.vectors = db_data['vectors']
-        
-        print(f"Database loaded: {len(self.chunks)} chunks")
+        self.chunks = data['chunks']
+        self.vectors = data['vectors']
         return True
     
-    # func to search the database
-    def search(self, query, top_k=3):
-        """Search for relevant content"""
+    # Finds relevant content using cosine similarity
+    def search(self, query, top_k=2):
         if self.vectors is None:
             return []
         
-        query_vector = self.model.encode([query])
-        similarities = cosine_similarity(query_vector, self.vectors)[0]
+        # Check cache
+        if query in self._cache:
+            return self._cache[query]
         
-        sorted_indices = np.argsort(similarities)[::-1]
+        model = self._get_model()
+        query_vec = model.encode([query])
+        query_vec = query_vec / np.linalg.norm(query_vec)
+        
+        # Fast similarity
+        similarities = np.dot(query_vec, self.vectors.T)[0]
+        top_idx = np.argpartition(similarities, -top_k)[-top_k:]
+        top_idx = top_idx[np.argsort(similarities[top_idx])[::-1]]
         
         results = []
-        for idx in sorted_indices[:top_k]:
-            if similarities[idx] > 0.1:  # minimum similarity threshold
+        for idx in top_idx:
+            if similarities[idx] > 0.1:
                 chunk = self.chunks[idx].copy()
                 chunk['similarity'] = float(similarities[idx])
                 results.append(chunk)
         
+        self._cache[query] = results
         return results
 
 class UNYCompassBot:
-    """Main chatbot class"""
-    
     def __init__(self, vector_db):
         self.vector_db = vector_db
         self.llm = ChatOpenAI(
@@ -160,101 +130,82 @@ class UNYCompassBot:
             temperature=0.3,
             openai_api_key=os.getenv("OPENAI_API_KEY")
         )
+        self._response_cache = {}
     
-    # to format context from the hunter_content.txt
-    def format_context(self, chunks):
-        """Format search results for context"""
-        if not chunks:
-            return "No relevant content found."
-        
-        context = "Based on Hunter College website information:\n\n"
-        
-        for i, chunk in enumerate(chunks, 1):
-            context += f"Source {i}:\n"
-            if chunk.get('title'):
-                context += f"Title: {chunk['title']}\n"
-            context += f"Content: {chunk['text']}\n\n"
-        
-        return context
-    
-    # func to format how the chatbot answers questions
+    # Generates AI responses
     def answer_question(self, question):
-        """Generate answer using search results"""
-        relevant_chunks = self.vector_db.search(question)
+        # Check cache first
+        if question in self._response_cache:
+            return self._response_cache[question]
         
-        if not relevant_chunks:
-            return "I don't have information about that topic. Please ask about Hunter College programs or academics."
+        chunks = self.vector_db.search(question)
         
-        context = self.format_context(relevant_chunks)
+        if not chunks:
+            return "I don't have info on that. Ask about Hunter College programs."
+        
+        # Build context
+        context = "Hunter College Info:\n\n"
+        for i, chunk in enumerate(chunks, 1):
+            context += f"Source {i}: {chunk['text'][:300]}\n\n"
         
         prompt = f"""{context}
 
-        
 You are a Hunter College academic advisor. Answer the student's question using the information provided above.
 Be helpful and informative. If you can, include relevant URLs from the sources. Do not respond saying "according to Hunte sources"
 Treat all information from the hunter website as factual. Only cite sources from the official Hunter College website.
-Only give answers that relate to Hunter College major programs or pathways.
+Only give answers that relate to Hunter College major programs or pathways. If the user asks about general subject of programs
+please list the majors that relate to that subject as well as the corresponding links.
 
 Ethics:
 Make sure it is clear that these are suggestions and that the student does not need to follow the suggestion
 
-Majors:
-
-Student Question: {question}
-
+Question: {question}
 Answer:"""
         
         try:
             response = self.llm.invoke(prompt)
-            return response.content.strip()
+            answer = response.content.strip()
+            self._response_cache[question] = answer
+            return answer
         except Exception as e:
-            return f"Sorry, I encountered an error: {e}"
+            return f"Error: {e}"
 
-# func to setup database
-def setup_database():
-    """Setup the vector database"""
-    vector_db = UNYCompassDatabase()
-    
-    if not vector_db.load_database():
-        print("Building new database...")
-        if not vector_db.build_database('../docs/hunter_content.txt'):
-            return None
-    
-    return vector_db
+# Global database
+_db = None
 
-# main func
+def get_database():
+    global _db
+    if _db is None:
+        _db = UNYCompassDatabase()
+        if not _db.chunks:
+            _db.build_database('../docs/hunter_content.txt')
+    return _db
+
 def main():
-    """Main chat function"""
-    print("Setting up Hunter College advisor...")
+    print("Starting Hunter advisor...")
     
-    vector_db = setup_database()
-    if not vector_db:
-        print("Failed to setup database!")
+    db = get_database()
+    if not db:
+        print("Database setup failed!")
         return
     
-    bot = UNYCompassBot(vector_db)
-    
-    print("Hunter College Advisor ready! Type 'quit' to exit.")
-    print("-" * 50)
+    bot = UNYCompassBot(db)
+    print("Ready! Type 'quit' to exit.\n")
     
     while True:
         try:
-            question = input("\nUser: ").strip()
+            question = input("User: ").strip()
             
             if question.lower() in ['quit', 'exit']:
-                print("Goodbye!")
                 break
             
-            if not question:
-                continue
-            
-            print("\nUNY Compass Bot: ", end="")
-            response = bot.answer_question(question)
-            print(response)
-            
+            if question:
+                print("Bot:", bot.answer_question(question))
+                
         except KeyboardInterrupt:
-            print("\nGoodbye!")
             break
+    
+    print("Goodbye!")
 
 if __name__ == "__main__":
     main()

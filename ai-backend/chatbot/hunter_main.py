@@ -46,6 +46,7 @@ class WebCrawler:
         
         return links
     
+    # Extracts clean text from HTML
     def extract_text(self, soup):
         """Get text content from page"""
         # Remove unwanted elements
@@ -63,6 +64,8 @@ class WebCrawler:
         
         return page_text
 
+
+    # Main web crawl function
     def crawl(self):
         """Main crawling function"""
         print(f"Starting crawl of {self.base_url}")
@@ -111,6 +114,7 @@ class WebCrawler:
         print(f"Crawling done. Visited {self.page_count} pages.")
         return self.all_text
     
+    # Saves scraped content to file
     def save_content(self, filename="../docs/hunter_content.txt"):
         """Save crawled content to file"""        
         try:
