@@ -2,17 +2,23 @@
 .homepage-container {
     display: flex;
     height: 100vh;
+    width: 100vw;
+    margin: 0;
+    padding: 0;
     background-color: #343541;
     color: #fff;
+    overflow: hidden;
 }
 
 /* Sidebar Styles */
 .sidebar {
     width: 260px;
+    height: 100vh;
     background-color: #202123;
     display: flex;
     flex-direction: column;
     padding: 8px;
+    flex-shrink: 0;
 }
 
 .new-chat-btn {
@@ -97,6 +103,8 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
 }
 
 /* Top Bar Styles */
@@ -107,6 +115,7 @@
     justify-content: space-between;
     padding: 0 24px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
 }
 
 .top-bar-title {
@@ -216,6 +225,8 @@
     justify-content: center;
     padding: 24px;
     overflow-y: auto;
+    height: calc(100vh - 60px);
+    /* Subtract top bar height */
 }
 
 .welcome-screen {
@@ -270,6 +281,7 @@
     width: 100%;
     max-width: 800px;
     margin: 0 auto;
+    height: 100%;
 }
 
 /* Responsive */

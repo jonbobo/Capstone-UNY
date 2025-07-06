@@ -136,7 +136,7 @@ def crawl_hunter_site():
     )
     
     content = crawler.crawl()
-    crawler.save_content("../../docs/hunter_content.txt")
+    crawler.save_content("../docs/hunter_content.txt")
     
     return content
 

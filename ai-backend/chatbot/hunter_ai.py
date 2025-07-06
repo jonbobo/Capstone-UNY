@@ -6,13 +6,18 @@ from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import re
 
-# Load env
+# Load env with absolute path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(script_dir, "..", "api", "hunter_api-key.env")
 load_dotenv(dotenv_path=env_path)
 
 class UNYCompassDatabase:
-    def __init__(self, db_file='../chatbot/unycompass_vectors.pkl'):
+    def __init__(self, db_file=None):
+        if db_file is None:
+            # Use absolute path based on the current script location
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            db_file = os.path.join(script_dir, 'unycompass_vectors.pkl')
+        
         self.db_file = db_file
         self.model = None
         self.chunks = []
@@ -20,7 +25,7 @@ class UNYCompassDatabase:
         self._cache = {}
         
         # Auto-load if exists
-        if os.path.exists(db_file):
+        if os.path.exists(self.db_file):
             self.load_database()
 
     def _get_model(self):
@@ -32,7 +37,12 @@ class UNYCompassDatabase:
         return re.sub(r'\s+', ' ', text).strip()
     
     #  Creates vector embeddings from text
-    def build_database(self, content_file='../docs/hunter_content.txt'):
+    def build_database(self, content_file=None):
+        if content_file is None:
+            # Use absolute path
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            content_file = os.path.join(script_dir, "..", "docs", "hunter_content.txt")
+        
         if not os.path.exists(content_file):
             return False
         
@@ -82,17 +92,20 @@ class UNYCompassDatabase:
         with open(self.db_file, 'wb') as f:
             pickle.dump({'chunks': self.chunks, 'vectors': self.vectors}, f)
 
-    # Loaas database with content
+    # Loads database with content
     def load_database(self):
         if not os.path.exists(self.db_file):
             return False
         
-        with open(self.db_file, 'rb') as f:
-            data = pickle.load(f)
-        
-        self.chunks = data['chunks']
-        self.vectors = data['vectors']
-        return True
+        try:
+            with open(self.db_file, 'rb') as f:
+                data = pickle.load(f)
+            
+            self.chunks = data['chunks']
+            self.vectors = data['vectors']
+            return True
+        except Exception as e:
+            return False
     
     # Finds relevant content using cosine similarity
     def search(self, query, top_k=2):
@@ -178,7 +191,10 @@ def get_database():
     if _db is None:
         _db = UNYCompassDatabase()
         if not _db.chunks:
-            _db.build_database('../docs/hunter_content.txt')
+            # Try to build database silently when called from API
+            success = _db.build_database()
+            if not success:
+                return None
     return _db
 
 def main():

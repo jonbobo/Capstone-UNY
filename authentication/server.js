@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const cors = require('cors');
+const { spawn } = require('child_process');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -14,13 +16,11 @@ app.use(cors());
 
 // PostgreSQL connection
 const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT,
+    connectionString: process.env.DATABASE_PUBLIC_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
-
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -64,7 +64,108 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+// CHATBOT API ENDPOINTS
+// Helper function to call Python chatbot
+const callPythonChatbot = (question) => {
+    return new Promise((resolve, reject) => {
+        // Path to the Python API wrapper
+        const pythonScriptPath = path.join(__dirname, '..', 'ai-backend', 'api', 'chatbot_api.py');
 
+        // Spawn Python process
+        const pythonProcess = spawn('python3', [pythonScriptPath, question], {
+            cwd: __dirname
+        });
+
+        let dataString = '';
+        let errorString = '';
+
+        pythonProcess.stdout.on('data', (data) => {
+            dataString += data.toString();
+        });
+
+        pythonProcess.stderr.on('data', (data) => {
+            errorString += data.toString();
+        });
+
+        pythonProcess.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(`Python process exited with code ${code}: ${errorString}`));
+                return;
+            }
+
+            try {
+                const result = JSON.parse(dataString);
+                resolve(result);
+            } catch (parseError) {
+                reject(new Error(`Failed to parse Python response: ${parseError.message}`));
+            }
+        });
+
+        pythonProcess.on('error', (error) => {
+            reject(new Error(`Failed to start Python process: ${error.message}`));
+        });
+    });
+};
+
+// Ask chatbot endpoint (authenticated users only)
+app.post('/api/chatbot/ask', authenticateToken, async (req, res) => {
+    try {
+        const { question } = req.body;
+
+        if (!question || !question.trim()) {
+            return res.status(400).json({ error: 'Question is required' });
+        }
+
+        console.log(`User ${req.user.username} asked: ${question}`);
+
+        // Call Python chatbot
+        const response = await callPythonChatbot(question);
+
+        if (response.error) {
+            return res.status(500).json({
+                error: 'Chatbot error',
+                details: response.error
+            });
+        }
+
+        res.json({
+            success: true,
+            question: response.question,
+            answer: response.answer,
+            user: req.user.username,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Chatbot API error:', error);
+        res.status(500).json({
+            error: 'Internal server error',
+            details: error.message
+        });
+    }
+});
+
+// Check chatbot status endpoint
+app.get('/api/chatbot/status', authenticateToken, async (req, res) => {
+    try {
+        // Test if Python chatbot is working
+        const testResponse = await callPythonChatbot('test');
+
+        res.json({
+            status: 'online',
+            pythonWorking: !testResponse.error,
+            message: testResponse.error || 'Chatbot is ready'
+        });
+    } catch (error) {
+        res.json({
+            status: 'offline',
+            pythonWorking: false,
+            message: error.message
+        });
+    }
+});
+
+// EXISTING AUTH ENDPOINTS
 // Register new user
 app.post('/api/auth/register', async (req, res) => {
     try {
@@ -79,7 +180,6 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(400).json({ error: 'Password must be at least 6 characters long' });
         }
 
-
         const existingUser = await pool.query(
             'SELECT id FROM users WHERE username = $1 OR email = $2',
             [username, email]
@@ -89,10 +189,8 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(400).json({ error: 'Username or email already exists' });
         }
 
-
         const saltRounds = 10;
         const passwordHash = await bcrypt.hash(password, saltRounds);
-
 
         const result = await pool.query(
             'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email, created_at',
@@ -100,7 +198,6 @@ app.post('/api/auth/register', async (req, res) => {
         );
 
         const newUser = result.rows[0];
-
 
         const token = jwt.sign(
             { userId: newUser.id, username: newUser.username },
@@ -172,7 +269,6 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
-
 app.get('/api/auth/profile', authenticateToken, async (req, res) => {
     try {
         const result = await pool.query(
@@ -191,7 +287,6 @@ app.get('/api/auth/profile', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
-
 
 app.put('/api/auth/profile', authenticateToken, async (req, res) => {
     try {
@@ -227,7 +322,6 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
     }
 });
 
-
 app.put('/api/auth/password', authenticateToken, async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
@@ -240,7 +334,6 @@ app.put('/api/auth/password', authenticateToken, async (req, res) => {
         if (newPassword.length < 6) {
             return res.status(400).json({ error: 'New password must be at least 6 characters long' });
         }
-
 
         const result = await pool.query(
             'SELECT password_hash FROM users WHERE id = $1',
@@ -260,7 +353,6 @@ app.put('/api/auth/password', authenticateToken, async (req, res) => {
         const saltRounds = 10;
         const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
 
-
         await pool.query(
             'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
             [newPasswordHash, userId]
@@ -274,9 +366,7 @@ app.put('/api/auth/password', authenticateToken, async (req, res) => {
     }
 });
 
-
 app.post('/api/auth/logout', authenticateToken, (req, res) => {
-
     res.json({ message: 'Logout successful' });
 });
 
@@ -284,13 +374,13 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-
+// Error handling middleware
 app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
-
+// 404 handler
 app.use('*', (req, res) => {
     res.status(404).json({ error: 'Route not found' });
 });
@@ -298,6 +388,9 @@ app.use('*', (req, res) => {
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log('Available endpoints:');
+    console.log('  Auth: /api/auth/*');
+    console.log('  Chatbot: /api/chatbot/ask, /api/chatbot/status');
 });
 
 module.exports = app;
