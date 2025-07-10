@@ -1,20 +1,22 @@
 import React, { useState } from 'react';
 import './HomePage.css';
+import ChatBot from './ChatBot';
 
-function HomePage({ user, onLogout }) {
+function HomePage({ user, onLogout, token }) {
     const [showDropdown, setShowDropdown] = useState(false);
     const [selectedChat, setSelectedChat] = useState(null);
     const [recentChats, setRecentChats] = useState([
-        { id: 1, title: 'Chat 1', timestamp: '2 hours ago' },
-        { id: 2, title: 'Chat 2', timestamp: '1 day ago' },
-        { id: 3, title: 'Chat 3', timestamp: '2 days ago' },
+        { id: 1, title: 'Academic Programs', timestamp: '2 hours ago', type: 'chatbot' },
+        { id: 2, title: 'Admission Requirements', timestamp: '1 day ago', type: 'chatbot' },
+        { id: 3, title: 'Financial Aid Info', timestamp: '2 days ago', type: 'chatbot' },
     ]);
 
     const handleNewChat = () => {
         const newChat = {
             id: Date.now(),
-            title: 'New Chat',
-            timestamp: 'Just now'
+            title: 'New Hunter Chat',
+            timestamp: 'Just now',
+            type: 'chatbot'
         };
         setRecentChats([newChat, ...recentChats]);
         setSelectedChat(newChat);
@@ -76,7 +78,7 @@ function HomePage({ user, onLogout }) {
                 {/* Top Bar */}
                 <div className="top-bar">
                     <div className="top-bar-title">
-                        {selectedChat ? selectedChat.title : 'UNY Compass'}
+                        {selectedChat ? selectedChat.title : 'Hunter Academic Advisor'}
                     </div>
 
                     <div className="profile-section">
@@ -122,27 +124,30 @@ function HomePage({ user, onLogout }) {
                 {/* Chat Area */}
                 <div className="chat-area">
                     {selectedChat ? (
-                        <div className="chat-content">
-                            <p>Chat content for: {selectedChat.title}</p>
-                            {/* Add your chat messages and input here */}
+                        <div className="chat-content" style={{ width: '100%', height: '100%' }}>
+                            <ChatBot user={user} token={token} />
                         </div>
                     ) : (
                         <div className="welcome-screen">
-                            <h1 className="welcome-title">Welcome to UNY Compass</h1>
-                            <p className="welcome-subtitle">Start a conversation by creating a new chat</p>
+                            <h1 className="welcome-title">Welcome to Hunter Academic Advisor</h1>
+                            <p className="welcome-subtitle">Get personalized guidance on Hunter College programs, admissions, and academic pathways</p>
 
                             <div className="suggestion-cards">
                                 <div className="suggestion-card" onClick={handleNewChat}>
-                                    <h3>💡 Examples</h3>
-                                    <p>"Explain quantum computing in simple terms"</p>
+                                    <h3>🎓 Academic Programs</h3>
+                                    <p>Explore majors, minors, and degree requirements</p>
                                 </div>
                                 <div className="suggestion-card" onClick={handleNewChat}>
-                                    <h3>🚀 Capabilities</h3>
-                                    <p>"Help me write a Python function"</p>
+                                    <h3>📝 Admissions</h3>
+                                    <p>Learn about application requirements and deadlines</p>
                                 </div>
                                 <div className="suggestion-card" onClick={handleNewChat}>
-                                    <h3>⚠️ Limitations</h3>
-                                    <p>"May occasionally generate incorrect information"</p>
+                                    <h3>💰 Financial Aid</h3>
+                                    <p>Discover scholarships and financial assistance options</p>
+                                </div>
+                                <div className="suggestion-card" onClick={handleNewChat}>
+                                    <h3>📍 Campus Life</h3>
+                                    <p>Find information about student services and resources</p>
                                 </div>
                             </div>
                         </div>
