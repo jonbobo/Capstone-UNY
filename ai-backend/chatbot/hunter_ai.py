@@ -14,15 +14,16 @@ load_dotenv(dotenv_path=env_path)
 class UNYCompassDatabase:
     def __init__(self, db_file='../chatbot/unycompass_vectors.pkl'):
         self.db_file = db_file
-        self.model = None
+        self.model = None # load to save memory
         self.chunks = []
         self.vectors = None
-        self._cache = {}
+        self._cache = {} 
         
-        # Auto-load if exists
+        # auto-load if exists
         if os.path.exists(db_file):
             self.load_database()
 
+    # laods ai to convert to binary, only loads when needed
     def _get_model(self):
         if self.model is None:
             self.model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -31,7 +32,8 @@ class UNYCompassDatabase:
     def clean_text(self, text):
         return re.sub(r'\s+', ' ', text).strip()
     
-    #  Creates vector embeddings from text
+    #  reads .txt form web scrape and splits to smaller chunks
+    # converts each chunk to bunary and saves
     def build_database(self, content_file='../docs/hunter_content.txt'):
         if not os.path.exists(content_file):
             return False
@@ -39,9 +41,11 @@ class UNYCompassDatabase:
         with open(content_file, 'r', encoding='utf-8') as f:
             content = f.read()
 
+    # split content to individual pages
         pages = content.split('---- Page:')
         
         for page_idx, page in enumerate(pages):
+            # skip 
             if len(page.strip()) < 100:
                 continue
 
@@ -65,24 +69,24 @@ class UNYCompassDatabase:
                         'page_idx': page_idx
                     })
 
-        # Create vectors
+        # create vectors
         model = self._get_model()
         texts = [chunk['text'] for chunk in self.chunks]
         self.vectors = model.encode(texts)
         
-        # Normalize for speed
+        # normalize for speed
         norms = np.linalg.norm(self.vectors, axis=1, keepdims=True)
         self.vectors = self.vectors / norms
 
         self.save_database()
         return True
     
-    # Saves database content
+    # saves database content if not saved
     def save_database(self):
         with open(self.db_file, 'wb') as f:
             pickle.dump({'chunks': self.chunks, 'vectors': self.vectors}, f)
 
-    # Loaas database with content
+    # reads database file and loads chunks to memory
     def load_database(self):
         if not os.path.exists(self.db_file):
             return False
@@ -94,7 +98,7 @@ class UNYCompassDatabase:
         self.vectors = data['vectors']
         return True
     
-    # Finds relevant content using cosine similarity
+    # finds relevant content using similairity comparing chunks with queries to find the most similar)
     def search(self, query, top_k=2):
         if self.vectors is None:
             return []
@@ -107,21 +111,33 @@ class UNYCompassDatabase:
         query_vec = model.encode([query])
         query_vec = query_vec / np.linalg.norm(query_vec)
         
-        # Fast similarity
+        # fast similarity
+        model = self._get_model()
+        query_vec = model.encode([query])
+        query_vec = query_vec / np.linalg.norm(query_vec)
+        
+        # calc how similar the query is to each chunk
         similarities = np.dot(query_vec, self.vectors.T)[0]
-        top_idx = np.argpartition(similarities, -top_k)[-top_k:]
-        top_idx = top_idx[np.argsort(similarities[top_idx])[::-1]]
+        
+        # find the indices of the most similar chunks
+        best_indices = np.argpartition(similarities, -top_k)[-top_k:]
+        
+        # sort similarity from high to low
+        best_indices = best_indices[np.argsort(similarities[best_indices])[::-1]]
         
         results = []
-        for idx in top_idx:
-            if similarities[idx] > 0.1:
+        for idx in best_indices:
+            similarity_score = similarities[idx]
+            
+            # filters unrelated content
+            if similarity_score > 0.1:
                 chunk = self.chunks[idx].copy()
-                chunk['similarity'] = float(similarities[idx])
+                chunk['similarity'] = float(similarity_score)
                 results.append(chunk)
         
         self._cache[query] = results
         return results
-
+    
 class UNYCompassBot:
     def __init__(self, vector_db):
         self.vector_db = vector_db
@@ -132,9 +148,9 @@ class UNYCompassBot:
         )
         self._response_cache = {}
     
-    # Generates AI responses
+    # generates AI responses based on user input
     def answer_question(self, question):
-        # Check cache first
+        # check cache first
         if question in self._response_cache:
             return self._response_cache[question]
         
@@ -143,21 +159,37 @@ class UNYCompassBot:
         if not chunks:
             return "I don't have info on that. Ask about Hunter College programs."
         
-        # Build context
+        # build context
         context = "Hunter College Info:\n\n"
         for i, chunk in enumerate(chunks, 1):
             context += f"Source {i}: {chunk['text'][:300]}\n\n"
         
         prompt = f"""{context}
 
+Overview: 
 You are a Hunter College academic advisor. Answer the student's question using the information provided above.
 Be helpful and informative. If you can, include relevant URLs from the sources. Do not respond saying "according to Hunte sources"
 Treat all information from the hunter website as factual. Only cite sources from the official Hunter College website.
 Only give answers that relate to Hunter College major programs or pathways. If the user asks about general subject of programs
 please list the majors that relate to that subject as well as the corresponding links.
 
+Guidelines:
+- be helpful and encouraging to students
+- include specific names of programs and degree types (BA, BS, MA, etc.), and requirements if needed
+- ALWAYS give relevant URLS so students can check the hunter website themself
+- focus on the academic programsm majors and pathways
+- if asked about specifc programs (i.e. Nursing), list all related majors with the links
+
 Ethics:
-Make sure it is clear that these are suggestions and that the student does not need to follow the suggestion
+- Always answer as if givig a suggestion and not a requiremtn
+- emphasize students have choices and can explore theur interests at Hunter
+- encourage them to talk to offical adviros (give the advisor contact info if needed), attend infor sessions, etc.
+
+Tone:
+- be encouraging
+- avoid academic jargon, you are supposed to be relatable to the student
+- be conversational but also profresional
+- be enthusastic about Hunte programs
 
 Question: {question}
 Answer:"""
@@ -170,9 +202,9 @@ Answer:"""
         except Exception as e:
             return f"Error: {e}"
 
-# Global database
 _db = None
 
+# creates or loads database as needed
 def get_database():
     global _db
     if _db is None:
@@ -181,6 +213,7 @@ def get_database():
             _db.build_database('../docs/hunter_content.txt')
     return _db
 
+# starts chatbot
 def main():
     print("Starting Hunter advisor...")
     
